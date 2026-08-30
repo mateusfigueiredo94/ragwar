@@ -1,11 +1,21 @@
 # RagWar
 
-**Distributed DDoS attack system for Ragnarok Online private servers.** Strike at their peak hours with surgical precision and minimal cost.
+```
+  ____          _      ____             _
+ / ___|   _ ___| |__  | __ )  ___  __ _| |_
+ \___ \  | '_/ _ \ '_ \ |  _ \ / _ \/ _` | __|
+  ___) | | | |  __/ |_) || |_) |  __/ (_| | |_
+ |____/  |_|  \___|____/ |____/ \___|\__,_|\__|
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Reference](https://pkg.go.dev/badge.github.com/mateusfigueiredo94/ragwar.svg)](https://pkg.go.dev/github.com/mateusfigueiredo94/ragwar)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mateusfigueiredo94/ragwar)](https://goreportcard.com/report/github.com/mateusfigueiredo94/ragwar)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/mateusfigueiredo94/ragwar)](go.mod)
+  Distributed DDoS attack system for Ragnarok Online private servers
+```
+
+**Strike at their peak hours with surgical precision and minimal cost.**
+
+| | |
+|---|---|
+| **License** | [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) |
+| **Go Version** | [![Go Report Card](https://goreportcard.com/badge/github.com/mateusfigueiredo94/ragwar)](https://goreportcard.com/report/github.com/mateusfigueiredo94/ragwar) |
 
 ---
 
@@ -30,30 +40,92 @@ make build
 ./bin/worker panel
 ```
 
-## Features
+## How It Works
 
-### Attack Modules
+Ragnarok emulators (Hercules, RagServer, eAthena) handle each connected player in a single thread. Every packet sent, every status update, every mob AI tick — all CPU work per connection. This means:
 
-| Module | Layer | Description | Status |
-|--------|-------|-------------|--------|
-| **UDP Flood** | L3 | High-rate UDP datagrams with randomized payloads | ✅ Ready |
-| **SYN Flood** | L3 | Raw TCP SYN packets filling the backlog queue | ✅ Ready |
-| **Connection Hold** | L4 | Opens & holds thousands of TCP connections (slowloris-style) | ✅ Ready |
-| **Fake Ragnarok Client** | L7 | Connects to login/char/game ports, sends processing-heavy packets | 📋 Planned |
-| **NTP Amplification** | L3/4 | NTP monlist amplification for massive bandwidth | 📋 Planned |
-| **DNS Amplification** | L3/4 | DNS recursion amplification | 📋 Planned |
-| **Memcached SSRF** | L3/4 | UDP memcached amplification via SSRF | 📋 Planned |
+1. **Few connections, high CPU impact** — a few thousand held connections can bring a 2-vCPU server to its knees.
+2. **Protocol awareness multiplies the effect** — sending a status update packet forces the emulator to recalculate position, check for items, update buffs. Each packet costs real CPU cycles.
+3. **Bandwidth is cheap; CPU is the bottleneck** — a 100Mbps line with a well-tuned attack module can outperform a 1Gbps line with a dumb flood.
 
-### Components
+RagWar exploits all three principles.
 
-- **Worker** — CLI binary that runs attacks against a target. Supports multiple attack types, live stats, and graceful shutdown.
-- **Panel** — Interactive ASCII terminal UI for managing multiple attacks simultaneously. Keyboard-driven with real-time stats.
-- **Attack Engine** — Modular, pluggable attack types registered at runtime. Easy to add new modules.
+## Attack Modules
+
+### Ready
+
+| Module | Layer | Description |
+|--------|-------|-------------|
+| **UDP Flood** | L3 | High-rate UDP datagrams with randomized payloads. Each worker gets its own socket for better dedup resistance. |
+| **SYN Flood** | L3 | Raw TCP SYN packets filling the backlog queue. Needs root/CAP_NET_RAW. Builds full IP+TCP headers with correct checksums. |
+| **Connection Hold** | L4 | Opens and holds thousands of TCP connections (slowloris-style). Forces the emulator to spend CPU per accepted connection. |
+
+### Planned
+
+| Module | Layer | Description |
+|--------|-------|-------------|
+| **Fake Ragnarok Client** | L7 | Connects to login/char/game ports, sends processing-heavy packets (status updates, movement, item use). The niche differentiator. |
+| **NTP Amplification** | L3/4 | NTP monlist amplification. Massive bandwidth from small workers. |
+| **DNS Amplification** | L3/4 | DNS recursion amplification. Requires open-resolver targets. |
+| **Memcached SSRF** | L3/4 | UDP memcached amplification via SSRF. The king of amplification ratios. |
+
+## Components
+
+### Worker
+
+The attack node. A single Go binary that runs attacks against a target with configurable type, intensity, and duration.
+
+```bash
+# List available attack types
+./bin/worker types
+
+# Run a UDP flood (50k pps for 60 seconds)
+./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s
+
+# Run a SYN flood (needs root)
+sudo ./bin/worker attack --target 192.168.1.100:6900 --type syn --pps 100000
+
+# Run a connection hold attack
+./bin/worker attack --target 192.168.1.100:6900 --type hold --conns 2000 --duration 120s
+
+# Quiet mode (no live stats)
+./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s --quiet
+
+# Custom worker goroutines
+./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --workers 8
+```
+
+### Panel
+
+Interactive ASCII terminal UI for managing multiple attacks simultaneously. Built with [tview](https://github.com/rivo/tview).
+
+```bash
+./bin/worker panel
+```
+
+**Keyboard controls:**
+
+| Key | Action |
+|-----|--------|
+| `a` | Add a new attack (form) |
+| `x` | Stop selected attack |
+| `d` | Delete selected history row |
+| `q` / `Ctrl+C` | Quit (stops all attacks) |
+
+**What you see:**
+- Active attacks with live pps/bps/conns stats
+- Total packets, bytes, and errors per attack
+- Attack state (running / stopped)
+- Running count in the status bar
+
+### Attack Engine
+
+Modular, pluggable attack types registered at runtime via `init()`. Adding a new module is a one-line registration.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                        RAGWAR SYSTEM                             │
 │                                                                  │
 │  ┌──────────────┐    ┌────────────────────┐    ┌──────────────┐  │
@@ -93,53 +165,8 @@ make build
 │              │   Region A  │  Region B  │  Other ASNs   │           │
 │              │   (5-10 VPS │   ($5-10/ea)│ IP rotation)  │           │
 │              └─────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-## Usage
-
-### Worker CLI
-
-```bash
-# List available attack types
-./bin/worker types
-
-# Run a UDP flood (50k pps for 60 seconds)
-./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s
-
-# Run a SYN flood (needs root)
-sudo ./bin/worker attack --target 192.168.1.100:6900 --type syn --pps 100000
-
-# Run a connection hold attack
-./bin/worker attack --target 192.168.1.100:6900 --type hold --conns 2000 --duration 120s
-
-# Quiet mode (no live stats)
-./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s --quiet
-
-# Use custom number of worker goroutines
-./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --workers 8
-```
-
-### Interactive Panel
-
-```bash
-./bin/worker panel
-```
-
-Keyboard controls:
-
-| Key | Action |
-|-----|--------|
-| `a` | Add a new attack (form) |
-| `x` | Stop selected attack |
-| `d` | Delete selected history row |
-| `q` / `Ctrl+C` | Quit (stops all attacks) |
-
-The panel shows:
-- Active attacks with live pps/bps/conns stats
-- Total packets, bytes, and errors per attack
-- Attack state (running / stopped)
-- Running count in the status bar
 
 ## Project Structure
 
@@ -187,6 +214,12 @@ The panel shows:
 |------|------|
 | Per worker VPS | ~$5–10/mo |
 | Recommended pool (5–10 workers) | ~$30–100/mo |
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| [rivo/tview](https://github.com/rivo/tview) | Terminal UI framework (panel) |
 
 ## License
 
